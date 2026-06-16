@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 """Offline index build and load (not timed at grading)."""
 from __future__ import annotations
 
@@ -182,3 +183,82 @@ def load_index(
     with gzip.open(root / BM25_INDEX_NAME, "rt", encoding="utf-8") as f:
         meta["lexical"] = json.load(f)
     return index, meta
+=======
+"""Offline index compilation and storage using FAISS"""
+from __future__ import annotations
+import json
+from pathlib import Path
+from typing import List, Optional, Tuple
+import numpy as np
+import faiss
+
+from chunk import Chunk, chunk_corpus
+from embed import embed_texts
+from utils import ARTIFACTS_DIR, ensure_artifacts_dir, iter_entries
+
+INDEX_NAME = "corpus.index"
+INDEX_META_NAME = "index_meta.json"
+
+def _compile_faiss_index(vectors: np.ndarray) -> faiss.Index:
+    """Initialize an optimized flat inner-product vector search space"""
+    dim = vectors.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(vectors)
+    return index
+
+def _serialize_artifacts(out_dir: Path, index: faiss.Index, chunks: List[Chunk]) -> None:
+    """Serialize the compiled index and contextual metadata to disk"""
+    faiss.write_index(index, str(out_dir / INDEX_NAME))
+    
+    meta = {
+        "page_ids": [c.page_id for c in chunks],
+        "chunk_ids": [c.chunk_id for c in chunks],
+        "model": "sentence-transformers/all-MiniLM-L6-v2",
+        "num_vectors": len(chunks),
+    }
+    (out_dir / INDEX_META_NAME).write_text(
+        json.dumps(meta, indent=2), encoding="utf-8"
+    )
+
+def build_index(
+    *,
+    entries_dir: Optional[Path] = None,
+    artifacts_dir: Optional[Path] = None,
+) -> Tuple[faiss.Index, List[int]]:
+    """
+    Main offline compilation pipeline
+    
+    Ingests raw JSON, splits text via sliding windows, embeds, 
+    and saves optimized FAISS structures to disk
+    """
+    print("Loading Wikipedia entries...")
+    out_dir = artifacts_dir or ensure_artifacts_dir()
+    records = list(iter_entries(entries_dir))
+    
+    print("Executing chunking process...")
+    chunks = chunk_corpus(records)
+    texts = [c.text for c in chunks]
+    
+    print(f"Embedding {len(texts)} segments...")
+    vectors = embed_texts(texts)
+    
+    print("Constructing localized FAISS network...")
+    index = _compile_faiss_index(vectors)
+    
+    print("Writing structural artifacts to Disk...")
+    _serialize_artifacts(out_dir, index, chunks)
+    
+    page_ids = [c.page_id for c in chunks]
+    print(f"Pipeline successfully finalized. Target directory: {out_dir}")
+    return index, page_ids
+
+def load_index(
+    artifacts_dir: Optional[Path] = None,
+) -> Tuple[faiss.Index, List[int]]:
+    """Reconstruct an active FAISS framework from local storage files"""
+    root = artifacts_dir or ARTIFACTS_DIR
+    index = faiss.read_index(str(root / INDEX_NAME))
+    meta = json.loads((root / INDEX_META_NAME).read_text(encoding="utf-8"))
+    page_ids = [int(x) for x in meta["page_ids"]]
+    return index, page_ids
+>>>>>>> f187b524f361147680c03b3492c4d8df957fad66

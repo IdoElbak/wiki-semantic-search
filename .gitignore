@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Environment variables
+.env
+
+# Raw Data
+data/
+student/
+
+Windows OS files
+.DS_Store
+Thumbs.dbartifacts/corpus.index
+artifacts/bm25_index.json.gz

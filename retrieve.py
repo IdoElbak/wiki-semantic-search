@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 """Query-time retrieval: FAISS + lexical scoring with RRF fusion + PRF."""
 from __future__ import annotations
 
@@ -7,11 +8,19 @@ import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional
+=======
+"""Query-time retrieval (timed portion includes query embedding)."""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import List, Optional
+>>>>>>> f187b524f361147680c03b3492c4d8df957fad66
 
 import numpy as np
 
 from embed import embed_queries
 from index import load_index
+<<<<<<< HEAD
 from utils import ARTIFACTS_DIR, K_EVAL
 
 KIND_BONUS: Dict[str, float] = {
@@ -176,6 +185,9 @@ def _rrf_fusion(
         pid for pid, _ in
         sorted(rrf.items(), key=lambda x: x[1], reverse=True)[:top_k]
     ]
+=======
+from utils import K_EVAL
+>>>>>>> f187b524f361147680c03b3492c4d8df957fad66
 
 
 def search_batch(
@@ -184,16 +196,27 @@ def search_batch(
     top_k: int = K_EVAL,
     artifacts_dir: Optional[Path] = None,
 ) -> List[List[int]]:
+<<<<<<< HEAD
 
     index, meta = _load(artifacts_dir)
     page_ids = meta["page_ids"]
     kinds    = meta.get("kinds", ["chunk"] * len(page_ids))
     lexical  = meta["lexical"]
 
+=======
+    """
+    Return ranked page_id lists (best first) for each query.
+
+    Default: brute-force dot product on L2-normalized vectors.
+    Replace with FAISS / reranking as needed.
+    """
+    corpus_vectors, page_ids = load_index(artifacts_dir)
+>>>>>>> f187b524f361147680c03b3492c4d8df957fad66
     query_vectors = embed_queries(queries)
     if query_vectors.size == 0:
         return [[] for _ in queries]
 
+<<<<<<< HEAD
     wf    = float(os.environ.get("TUNE_WF",  "1.0"))
     wb    = float(os.environ.get("TUNE_WB",  "1.5"))
     rrf_k = int(os.environ.get("TUNE_RRF",  "60"))
@@ -235,3 +258,21 @@ def search_batch(
         results.append(_rrf_fusion(dense_combined, lex, top_k, rrf_k, wf, wb))
 
     return results
+=======
+    scores = query_vectors @ corpus_vectors.T
+    ranked: List[List[int]] = []
+    for row in scores:
+        order = np.argsort(-row)
+        seen: set[int] = set()
+        ids: List[int] = []
+        for idx in order:
+            pid = page_ids[int(idx)]
+            if pid in seen:
+                continue
+            seen.add(pid)
+            ids.append(pid)
+            if len(ids) >= top_k:
+                break
+        ranked.append(ids)
+    return ranked
+>>>>>>> f187b524f361147680c03b3492c4d8df957fad66

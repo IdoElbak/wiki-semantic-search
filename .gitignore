@@ -16,5 +16,4 @@ student/
 Windows OS files
 .DS_Store
 Thumbs.dbartifacts/corpus.index
-artifacts/bm25_index.json.gz
 __pycache__/

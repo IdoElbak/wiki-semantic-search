@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """Embedding utilities (sentence-transformers/all-MiniLM-L6-v2 only)."""
 from __future__ import annotations
 
@@ -65,44 +64,4 @@ def embed_texts(texts: Sequence[str], *, batch_size: int = 128) -> np.ndarray:
 
 
 def embed_queries(queries: List[str], *, batch_size: int = 128) -> np.ndarray:
-=======
-"""Embedding utilities optimized for sentence-transformers/all-MiniLM-L6-v2"""
-from __future__ import annotations
-from typing import List, Sequence
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from utils import EMBEDDING_MODEL_NAME
-
-_model: SentenceTransformer | None = None
-
-def get_model() -> SentenceTransformer:
-    """Initialize the sentence-transformer encoder"""
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    return _model
-
-def embed_texts(texts: Sequence[str], *, batch_size: int = 256) -> np.ndarray:
-    """
-    Encode an array of text strings into unit-normalized dense vectors
-    
-    Enforces L2-normalization so that fast downstream Inner Product (Dot Product) 
-    operations yield exact Cosine Similarity spaces
-    """
-    if not texts:
-        return np.zeros((0, 384), dtype=np.float32)
-    
-    model = get_model()
-    vectors = model.encode(
-        list(texts),
-        batch_size=batch_size,
-        show_progress_bar=True,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-    )
-    return np.asarray(vectors, dtype=np.float32)
-
-def embed_queries(queries: List[str], *, batch_size: int = 64) -> np.ndarray:
-    """Encode runtime queries"""
->>>>>>> f187b524f361147680c03b3492c4d8df957fad66
     return embed_texts(queries, batch_size=batch_size)

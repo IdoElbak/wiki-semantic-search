@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """Preprocessing and chunking for the retrieval pipeline."""
 from __future__ import annotations
 
@@ -115,59 +114,4 @@ def chunk_corpus(records: List[Dict[str, Any]]) -> List[Chunk]:
     chunks: List[Chunk] = []
     for record in records:
         chunks.extend(chunk_entry(record))
-=======
-"""Optional preprocessing and chunking module"""
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any, Dict, List
-
-@dataclass
-class Chunk:
-    page_id: int
-    chunk_id: int
-    text: str
-
-def _extract_words_and_title(record: Dict[str, Any]) -> tuple[int, str, List[str]]:
-    """Extract and normalize basic text components from a raw corpus record"""
-    page_id = int(record["page_id"])
-    title = record.get("title", "").strip()
-    content = record.get("content", "").strip()
-    return page_id, title, content.split()
-
-def _build_single_chunk(page_id: int, chunk_id: int, title: str, window_words: List[str]) -> Chunk:
-    """Construct a clean Chunk object, injecting title metadata for semantic anchoring"""
-    chunk_text = " ".join(window_words)
-    if title:
-        chunk_text = f"{title} - {chunk_text}"
-    return Chunk(page_id=page_id, chunk_id=chunk_id, text=chunk_text)
-
-def chunk_entry(record: Dict[str, Any], window_size: int = 150, overlap: int = 30) -> List[Chunk]:
-    """
-    Split one corpus entry into overlapping retrieval units
-    Prepends the title to every chunk to retain global semantic context
-    Empirically tuned to 150 words to safely fit within MiniLM's 256 token limit
-    """
-    page_id, title, words = _extract_words_and_title(record)
-    
-    if not words:
-        return [Chunk(page_id=page_id, chunk_id=0, text=title)]
-        
-    chunks: List[Chunk] = []
-    chunk_id = 0
-    step = max(1, window_size - overlap)
-    
-    for i in range(0, len(words), step):
-        window_words = words[i : i + window_size]
-        chunks.append(_build_single_chunk(page_id, chunk_id, title, window_words))
-        chunk_id += 1
-        
-    return chunks
-
-def chunk_corpus(records: List[Dict[str, Any]]) -> List[Chunk]:
-    """Process an entire iterable sequence of corpus records into flat chunks"""
-    chunks: List[Chunk] = []
-    for record in records:
-        chunks.extend(chunk_entry(record))
->>>>>>> f187b524f361147680c03b3492c4d8df957fad66
     return chunks

@@ -1,9 +1,9 @@
-<<<<<<< HEAD
+
 numpy>=1.24
 sentence-transformers>=2.2.0
 faiss-cpu>=1.7.4
-=======
+
 numpy>=1.24
 sentence-transformers>=2.2.0
 faiss-cpu>=1.7.4
->>>>>>> f187b524f361147680c03b3492c4d8df957fad66
+

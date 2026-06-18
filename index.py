@@ -30,6 +30,15 @@ STOPWORDS = {
 
 
 def _progress(label: str, current: int, total: int, start_time: float, width: int = 40) -> None:
+    """Print an in-place ASCII progress bar to stdout.
+
+    Args:
+        label:      Short description of the current step.
+        current:    Number of items processed so far.
+        total:      Total number of items.
+        start_time: Unix timestamp when processing started (from time.time()).
+        width:      Character width of the bar (default 40).
+    """
     pct     = current / max(1, total)
     filled  = int(width * pct)
     bar     = "█" * filled + "░" * (width - filled)
@@ -41,6 +50,16 @@ def _progress(label: str, current: int, total: int, start_time: float, width: in
 
 
 def _tokens(text: str) -> List[str]:
+    """Tokenize text into lowercase alphanumeric tokens, filtering stopwords.
+
+    Tokens shorter than 3 characters or present in STOPWORDS are discarded.
+
+    Args:
+        text: Raw input string.
+
+    Returns:
+        List of filtered token strings.
+    """
     return [
         t for t in TOKEN_RE.findall(text.lower())
         if len(t) >= 3 and t not in STOPWORDS
@@ -48,6 +67,17 @@ def _tokens(text: str) -> List[str]:
 
 
 def _features(text: str) -> List[str]:
+    """Extract unigrams, bigrams, and trigrams from text.
+
+    Builds on _tokens() to produce a flat list of all n-gram features
+    used for the lexical index.
+
+    Args:
+        text: Raw input string.
+
+    Returns:
+        List of feature strings (unigrams, "a_b" bigrams, "a_b_c" trigrams).
+    """
     toks  = _tokens(text)
     feats = list(toks)
     feats += [f"{toks[i]}_{toks[i+1]}" for i in range(len(toks) - 1)]
@@ -56,7 +86,23 @@ def _features(text: str) -> List[str]:
 
 
 def _build_bm25(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Page-level BM25 with bigrams/trigrams. Title doubled for entity boost."""
+    """Build a page-level inverted index with BM25-style statistics.
+
+    Each page is represented by unigrams, bigrams, and trigrams extracted
+    from its title (doubled for entity-name boost) and up to the first
+    1,200 whitespace-separated words of its content.
+
+    Very rare terms (document frequency ≤ 1) and very common terms
+    (document frequency > 3,000) are pruned from the index.
+
+    Args:
+        records: List of page dicts with "page_id", "title", and "content".
+
+    Returns:
+        Dict with two keys:
+            "docs"  — list of {"page_id": int, "length": int} per page.
+            "terms" — dict mapping each feature to [idf, [(doc_idx, count), ...]].
+    """
     docs: List[Dict[str, Any]] = []
     postings: Dict[str, Dict[int, int]] = {}
 
@@ -71,7 +117,7 @@ def _build_bm25(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         title   = str(record.get("title", ""))
         content = " ".join(str(record.get("content", "")).split()[:1200])
 
-        # Title doubled — gives extra weight to entity name matching
+        # Title doubled — gives extra weight to entity name matching.
         counts: Dict[str, int] = {}
         for feat in _features(title + " " + title + " " + content):
             counts[feat] = counts.get(feat, 0) + 1
@@ -95,6 +141,17 @@ def _build_bm25(records: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _build_faiss(vectors: np.ndarray) -> faiss.Index:
+    """Create an exact inner-product FAISS index from L2-normalized vectors.
+
+    Uses IndexFlatIP so that inner product equals cosine similarity for
+    normalized inputs.
+
+    Args:
+        vectors: Float32 array of shape (n, dim) with L2-normalized rows.
+
+    Returns:
+        A populated faiss.IndexFlatIP index.
+    """
     index = faiss.IndexFlatIP(vectors.shape[1])
     index.add(vectors)
     return index
@@ -106,6 +163,20 @@ def _save_artifacts(
     chunks: List[Chunk],
     bm25: Dict[str, Any],
 ) -> None:
+    """Persist all index artifacts to disk.
+
+    Writes three files:
+        corpus.index       — FAISS binary index.
+        index_meta.json    — Maps every FAISS vector to its page_id,
+                             chunk_id, and chunk kind.
+        bm25_index.json.gz — Gzip-compressed lexical index.
+
+    Args:
+        out_dir: Directory to write artifacts into.
+        index:   Populated FAISS index.
+        chunks:  Ordered list of Chunk objects matching the FAISS vectors.
+        bm25:    Output of _build_bm25().
+    """
     faiss.write_index(index, str(out_dir / INDEX_NAME))
     meta: Dict[str, Any] = {
         "page_ids":    [c.page_id  for c in chunks],
@@ -124,7 +195,27 @@ def build_index(
     entries_dir: Optional[Path] = None,
     artifacts_dir: Optional[Path] = None,
 ) -> Tuple[faiss.Index, List[int]]:
+    """Build and save the full offline index from the raw corpus.
 
+    Runs four sequential steps:
+        1. Load all Wikipedia page records from disk.
+        2. Chunk each page into at most 6 Chunk objects.
+        3. Embed all chunks with MiniLM (sentence-transformers).
+        4. Build the FAISS dense index and the BM25 lexical index,
+           then save both to artifacts/.
+
+    This function is intended to be run once locally before submission.
+    It is not called by the autograder at grading time.
+
+    Args:
+        entries_dir:   Override for the corpus directory
+                       (default: utils.ENTRIES_DIR).
+        artifacts_dir: Override for the output directory
+                       (default: utils.ARTIFACTS_DIR).
+
+    Returns:
+        Tuple of (faiss.Index, list[page_id]) for the built index.
+    """
     total_start = time.time()
     out_dir = artifacts_dir or ensure_artifacts_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -174,6 +265,21 @@ def build_index(
 def load_index(
     artifacts_dir: Optional[Path] = None,
 ) -> Tuple[faiss.Index, Dict[str, Any]]:
+    """Load prebuilt index artifacts from disk.
+
+    Reads the FAISS index, the metadata JSON, and the gzip-compressed
+    lexical index produced by build_index().
+
+    Args:
+        artifacts_dir: Directory containing the artifact files
+                       (default: utils.ARTIFACTS_DIR).
+
+    Returns:
+        Tuple of:
+            faiss.Index — the loaded dense index.
+            dict        — metadata with keys "page_ids", "chunk_ids",
+                          "kinds", "model", "num_vectors", and "lexical".
+    """
     root  = artifacts_dir or ARTIFACTS_DIR
     index = faiss.read_index(str(root / INDEX_NAME))
     meta  = json.loads((root / INDEX_META_NAME).read_text(encoding="utf-8"))

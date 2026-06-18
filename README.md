@@ -1,186 +1,332 @@
-# Section B — Wikipedia Semantic Search
+# Section B — Hybrid Retrieval Pipeline
 
-**Course:** Data Analysis and Visualization 
+This repository contains our solution for **Section B of Project A**.
 
-**Team:** Ronit Ness · Ido Elbak
+The system receives a batch of natural-language queries and returns, for each query, a ranked list of Wikipedia page IDs. The final ranking combines semantic retrieval with exact lexical matching.
 
-**Repository:** [https://github.com/IdoElbak/wiki-semantic-search](https://github.com/IdoElbak/wiki-semantic-search)
+Only the first 10 page IDs are evaluated using **mean NDCG@10**.
 
-**Video Presentation:** _[link to be added]_
-
----
-
-## Overview
-
-An end-to-end retrieval pipeline over a corpus of Wikipedia-style articles. Given a natural-language query, the system returns a ranked list of the 10 most relevant `page_id` values, scored by **mean NDCG@10**.
-
-The pipeline is built entirely on allowed dependencies: `sentence-transformers/all-MiniLM-L6-v2`, `faiss-cpu`, and `numpy`. No external ranking models are used.
+> **Presentation video:** https://youtu.be/091c2a2tqJY
 
 ---
 
-## Quick Start
+## Repository structure
 
-### 1. Prerequisites
+```text
+student/
+├── main.py
+├── chunk.py
+├── embed.py
+├── index.py
+├── retrieve.py
+├── utils.py
+├── eval.py
+├── requirements.txt
+├── README.md
+├── artifacts/
+│   ├── corpus.index
+│   ├── index_meta.json
+│   └── bm25_index.json.gz
+├── data/
+│   ├── public_queries.json
+│   └── Wikipedia Entries/
+└── scripts/
+    ├── build_index.py
+    └── eval_public.py
+```
+
+The supplied evaluation files were not modified:
+
+- `eval.py`
+- `scripts/build_index.py`
+- `scripts/eval_public.py`
+
+---
+
+## Setup
+
+Run from the `student/` directory:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Dependencies (`requirements.txt`):
-```
-numpy
-sentence-transformers
-faiss-cpu
+The corpus must be located at:
+
+```text
+data/Wikipedia Entries/
 ```
 
-### 2. Build the Index (offline, run once)
+Each corpus file contains one page:
 
-> The corpus must be in `data/Wikipedia Entries/` (one JSON file per page).
-> The index is already prebuilt in `artifacts/` — you do **not** need to run this at evaluation time.
+```json
+{
+  "page_id": 25051,
+  "title": "...",
+  "content": "..."
+}
+```
+
+---
+
+## Submitted artifacts
+
+A fresh clone of the repository already contains all files required by `run()`.
+
+| Artifact | Format | Contents |
+|---|---|---|
+| `artifacts/corpus.index` | FAISS binary index | Normalized MiniLM vectors for all chunks |
+| `artifacts/index_meta.json` | JSON | The `page_id`, `chunk_id`, and chunk type associated with every vector |
+| `artifacts/bm25_index.json.gz` | Gzipped JSON | Page-level lexical documents, term statistics, and inverted postings |
+
+The pretrained MiniLM model is loaded through `sentence-transformers` and is not included in the repository.
+
+Large artifact files may be stored with Git LFS.
+
+---
+
+## Build the index offline
+
+The index is built locally and is not rebuilt during grading.
 
 ```bash
 python scripts/build_index.py
 ```
 
-Expected output:
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📂  [1/4] Loading Wikipedia entries...
-    ✓ 27,xxx pages loaded
-✂️   [2/4] Chunking corpus...
-    ✓ ~120,000 chunks (avg 4–5 per page)
-🔢  [3/4] Embedding chunks with MiniLM...
-    [████████████████████] 100%
-🗂️   [4/4] Building FAISS + BM25 indexes...
-✅  Done — total ~10 min on GPU
-```
+The build process:
 
-### 3. Evaluate on Public Queries
+1. loads the Wikipedia entries;
+2. creates the page chunks;
+3. embeds all chunks with MiniLM;
+4. builds the FAISS and lexical indexes;
+5. saves the required files under `artifacts/`.
+
+After rebuilding, the new artifact files must be committed to the repository.
+
+---
+
+## Run the public evaluation
 
 ```bash
 python scripts/eval_public.py
 ```
 
-Prints: `mean_ndcg@10=0.XXXX` over the 29 public queries.
+This command verifies that the submitted artifacts can be loaded directly, without rebuilding the index.
 
----
+The autograder calls:
 
-## Artifacts
+```python
+from main import run
 
-All files are committed under `artifacts/`.
-
-| File | Format | Description |
-|------|--------|-------------|
-| `artifacts/corpus.index` | FAISS binary | IndexFlatIP over all chunk embeddings (dim=384) |
-| `artifacts/index_meta.json` | JSON | `page_ids`, `chunk_ids`, `kinds` (title/lead/chunk) per vector |
-| `artifacts/index_vectors.npy` | NumPy binary | Raw chunk embedding matrix (shape: n_chunks × 384) |
-| `artifacts/bm25_index.json.gz` | gzip JSON | Custom BM25 inverted index with bigrams & trigrams |
-
-`run()` calls `load_index()` which reads all four files from `artifacts/` at query time.
-
----
-
-## Pipeline
-
-### `chunk.py` — Section-Aware Chunking
-
-Each Wikipedia page is split into multiple typed chunks:
-
-1. **Title chunk** (`kind="title"`) — the page title alone; catches entity-name queries.
-2. **Lead chunk** (`kind="lead"`) — `"{title}. {first paragraph}"`. The lead paragraph is the most fact-dense part of any Wikipedia article.
-3. **Body chunks** (`kind="chunk"`) — section-aware if the article has ≥2 detected headers, otherwise a sliding window over sentences (window=5, stride=3). Every body chunk is prefixed with `"{title} - {section}."` so the entity name travels with each passage.
-
-Average ~4–6 chunks per page, capped at 6.
-
-### `embed.py` — Embedding
-
-- Model: `sentence-transformers/all-MiniLM-L6-v2` (dim=384)
-- `max_seq_length = 256` to prevent silent truncation
-- `batch_size = 128`, L2-normalized output
-- GPU-accelerated when available (Tesla M60 on Technion VM: ~10 min to embed the full corpus)
-
-### `index.py` — Offline Index Build
-
-**FAISS:** `IndexFlatIP` (exact inner product, equivalent to cosine on normalized vectors).
-
-**BM25:** A custom implementation (no external BM25 library) with:
-- Page-level documents (all chunks aggregated per page)
-- Title text doubled — gives extra weight to entity name matches
-- Features: unigrams + bigrams + trigrams (e.g. `"los_angeles"`, `"los_angeles_lakers"`)
-- Low-frequency terms (`df ≤ 1`) and very common terms (`df > 3000`) pruned at build time
-- Compressed with gzip (`bm25_index.json.gz`) for efficient storage
-
-### `retrieve.py` — Two-Stage Retrieval with RRF Fusion
-
-At query time, `run(queries)` in `main.py` delegates to `search_batch()` in `retrieve.py`, which runs the following steps:
-
-1. **Load** the prebuilt index from `artifacts/` (cached after first call)
-2. **Embed** all queries in one batch with MiniLM
-3. **FAISS search** — `faiss_k = max(2000, top_k × 60)` candidates per query
-
-**Stage 1 — Candidate aggregation:**
-- Chunk scores aggregated to page level using **top-K mean pooling** (`TOPK_MEAN=3`): mean of the 3 best-scoring chunks per page
-- `KIND_BONUS` applied: +0.060 for title chunks, +0.035 for lead chunks
-
-**Stage 2 — Dense re-score:**
-- Top 350 candidates re-scored using exact dot products against the full corpus vector matrix
-- Eliminates any approximation error for the shortlist
-
-**Lexical scoring (BM25-style):**
-- Custom TF-IDF with IDF threshold ≥ 1.2, phrase boost × 2.2 for bigrams/trigrams
-- Numbers get a dedicated boost (× 6.0) — important for population, date, and score queries
-- **Decade expansion**: `"1820s"` → tokens `1820 1821 … 1829` for temporal queries
-
-**Fusion:**
-- Reciprocal Rank Fusion (RRF) combining dense and lexical signals
-- Dynamic per-query weighting: a specificity score (derived from token IDF and coverage) adjusts `wf`/`wb` at query time
-- Returns top-10 `page_id` per query; all query-time computation runs on GPU (≪ 60 s for 50 queries)
-- Best hyperparameters found by grid search: `WF=1.2, WB=1.0, RRF_k=120`
-
----
-
-## Empirical Results
-
-All scores are mean NDCG@10 on the 29 public queries.
-
-| Version | `chunk.py` | `index.py` | `retrieve.py` | NDCG@10 |
-|---------|-----------|-----------|--------------|---------|
-| **Baseline** | 1 chunk/page — title + first 200 words only | Basic FAISS flat + single-document BM25 | Simple RRF; no chunk aggregation | 0.320 |
-| **Chunking overhaul** | Section-aware: title chunk + lead chunk + body chunks (sliding window over sentences, window=5, stride=3); title prefix on every chunk; ~4–6 chunks/page | Rebuilt with multi-chunk pages; BM25 now indexes full page vocabulary | Max-pooling to collapse multiple chunks per page to a single page score | 0.408 |
-| **Hyperparameter tuning** | — | — | Grid-searched WF, WB, RRF_k over 80 combinations; best: WF=1.0, WB=0.8, RRF_k=90 | 0.421 |
-| **Candidate pool + temporal expansion** | — | Title text doubled in BM25 for entity-name boost; bigrams/trigrams added | FAISS candidates raised to 2000; decade tokens expanded ("1820s" → 1820–1829); PRF removed (hurt performance) | 0.439 |
-| **Top-5 mean pooling** | — | — | Changed to best performing chunk aggregation, top-3 mean per page | 0.440 |
-| **Two-stage rescore** | — | — | Exact dot-product re-score of top-350 candidates; dynamic per-query RRF weighting | **0.448** |
-
-**Key findings from ablation:**
-- PRF (Pseudo-Relevance Feedback) slightly hurt performance — removed in final version
-- `RRF_k = 120` outperforms smaller values across all variants
-- Chunking quality (section-aware structure, title prefix on every chunk) was the single highest-impact change — moving from 1 chunk/page to typed multi-chunk pages accounted for most of the gain from 0.32 to 0.44+
-
----
-
-## Project Structure
-
+results = run(queries)
 ```
-student/
-├── main.py            # Entry point: run(queries)
-├── chunk.py           # Section-aware chunking
-├── embed.py           # MiniLM embedding utilities
-├── index.py           # Offline FAISS + BM25 index builder & loader
-├── retrieve.py        # Query-time retrieval and fusion
-├── utils.py           # Shared paths and helpers
-├── eval.py            # NDCG@10 utilities (read-only)
-├── requirements.txt
-├── README.md
-├── scripts/
-│   ├── build_index.py      # Offline build script (read-only)
-│   └── eval_public.py      # Self-evaluation on public queries (read-only)
-├── data/
-│   ├── public_queries.json
-│   └── Wikipedia Entries/  # One JSON per page
-└── artifacts/
-    ├── corpus.index         # FAISS index
-    ├── index_meta.json      # Chunk metadata (page_ids, kinds)
-    ├── index_vectors.npy    # Raw chunk embedding matrix
-    └── bm25_index.json.gz   # Compressed BM25 index
+
+`run()` returns one ranked list of integer page IDs for every query:
+
+```python
+list[list[int]]
 ```
+
+---
+
+## Retrieval pipeline
+
+### 1. Chunking
+
+Each page is represented by at most six chunks.
+
+#### Title chunk
+
+The page title is stored as a separate chunk with:
+
+```text
+kind = "title"
+```
+
+This helps queries that directly mention an entity or page name.
+
+#### Lead chunk
+
+The title and the first paragraph are combined into one chunk:
+
+```text
+title + lead paragraph
+```
+
+#### Body chunks
+
+The remaining content is handled in one of two ways:
+
+- **Pages with detected section headers:** paragraphs are grouped by section. Long sections may be split into two parts.
+- **Pages without detected section headers:** the text is divided into overlapping windows of 5 sentences with a stride of 3, up to 4 body windows.
+
+This keeps the number of vectors per page bounded while preserving local context.
+
+---
+
+### 2. Embeddings
+
+Corpus chunks and queries are embedded with the required model:
+
+```text
+sentence-transformers/all-MiniLM-L6-v2
+```
+
+Configuration:
+
+- vector dimension: `384`
+- maximum sequence length: `256`
+- batch size: `128`
+- L2-normalized output vectors
+
+Because the vectors are normalized, inner product is equivalent to cosine similarity.
+
+---
+
+### 3. Dense FAISS retrieval
+
+All chunk vectors are stored in:
+
+```python
+faiss.IndexFlatIP
+```
+
+At query time, FAISS retrieves up to **2,000 chunk matches** for each query.
+
+The matches are grouped by `page_id`. Before page aggregation, small fixed bonuses are added according to chunk type:
+
+| Chunk type | Bonus |
+|---|---:|
+| Title | `0.060` |
+| Lead | `0.035` |
+| Regular chunk | `0.000` |
+
+For each page, the system calculates the mean of its best **up to three** adjusted chunk scores. The best **350 pages** are retained as candidates.
+
+These values are manually selected hyperparameters; they are not learned by the embedding model.
+
+---
+
+### 4. Dense page reranking
+
+For each of the 350 retained pages, the system compares the query with all stored chunks belonging to that page.
+
+The dense page score is the mean of the page's best up to three chunk similarities:
+
+```text
+dense_page_score = mean(top 3 query-to-chunk similarities)
+```
+
+The first dense stage is used for candidate selection. This second stage produces the dense page ranking used in the final fusion.
+
+---
+
+### 5. Lexical retrieval
+
+A separate page-level inverted index is built from:
+
+- unigrams
+- adjacent bigrams
+- adjacent trigrams
+
+During indexing:
+
+- text is converted to lowercase;
+- short terms and selected stop words are removed;
+- the title is included twice to strengthen direct title matches;
+- at most the first 1,200 words of the page content are indexed.
+
+The lexical score uses term rarity, term frequency, phrase boosts, numeric boosts, and document-length normalization.
+
+For example, a query containing `1990s` is expanded to the years `1990` through `1999`.
+
+The artifact is named `bm25_index.json.gz`, but the retrieval code uses a custom **BM25-inspired lexical score**, not a standard BM25 library implementation.
+
+---
+
+### 6. Query-dependent weights
+
+The balance between dense and lexical retrieval changes according to the query.
+
+The code calculates a specificity score from four signals:
+
+```text
+specificity =
+    0.40 * IDF signal
+  + 0.30 * lexical coverage
+  + 0.20 * query-length signal
+  + 0.10 * numeric signal
+```
+
+Here, **lexical coverage** is the fraction of filtered query terms that appear in the lexical index.
+
+The final weights are:
+
+```text
+dense_weight   = 1.2 * (1.4 - 0.8 * specificity)
+lexical_weight = 1.0 * (0.4 + 1.4 * specificity)
+```
+
+Therefore:
+
+- broader queries receive more dense semantic weight;
+- queries with rare terms, phrases, or numbers receive more lexical weight.
+
+The coefficients are fixed hyperparameters selected during development.
+
+---
+
+### 7. Final fusion
+
+The dense and lexical page rankings are combined with a weighted reciprocal-rank calculation.
+
+For each page:
+
+```text
+final_score =
+    dense_weight / (120 + dense_rank)
+  + lexical_weight * normalized_lexical_score
+    / (120 + lexical_rank)
+```
+
+Ranks are zero-based in the implementation. The lexical score is normalized by the largest lexical score for the same query.
+
+Pages are sorted by `final_score`, and the top 10 unique page IDs are returned.
+
+---
+
+## Main hyperparameters
+
+| Parameter | Value |
+|---|---:|
+| Maximum chunks per page | `6` |
+| Sentence window size | `5` |
+| Sentence stride | `3` |
+| Maximum MiniLM sequence length | `256` |
+| FAISS chunk matches | `2000` |
+| Pages retained for reranking | `350` |
+| Page aggregation | Mean of top `3` |
+| Title bonus | `0.060` |
+| Lead bonus | `0.035` |
+| Base dense weight | `1.2` |
+| Base lexical weight | `1.0` |
+| Fusion constant | `120` |
+| Evaluation cutoff | `10` |
+
+
+
+## Query-time behavior
+
+Corpus preprocessing and corpus embedding are completed during the offline build.
+
+During grading, `run()` only:
+
+1. loads the submitted artifacts;
+2. embeds the query batch;
+3. performs batched FAISS search;
+4. selects and reranks page candidates;
+5. calculates lexical scores;
+6. fuses the rankings;
+7. returns the top page IDs.
+
+The loaded artifacts, reconstructed corpus vectors, and page-to-chunk mapping are cached in memory for reuse within the same process.

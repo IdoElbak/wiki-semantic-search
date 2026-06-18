@@ -8,6 +8,15 @@ from typing import Any, Dict, List
 
 @dataclass
 class Chunk:
+    """A single text chunk extracted from a Wikipedia page.
+
+    Attributes:
+        page_id:  The ID of the source page.
+        chunk_id: Zero-based index of this chunk within the page.
+        text:     The chunk text that will be embedded.
+        kind:     One of "title", "lead", or "chunk".
+    """
+
     page_id: int
     chunk_id: int
     text: str
@@ -15,7 +24,18 @@ class Chunk:
 
 
 def _is_header(para: str) -> bool:
-    """Detect Wikipedia-style section headers."""
+    """Detect Wikipedia-style section headers.
+
+    A paragraph is treated as a header when it is short (at most 6 words,
+    fewer than 60 characters) and contains none of the punctuation marks
+    that typically appear in prose sentences.
+
+    Args:
+        para: A single paragraph string.
+
+    Returns:
+        True if the paragraph looks like a section header.
+    """
     words = para.split()
     return (
         len(words) <= 6
@@ -25,11 +45,42 @@ def _is_header(para: str) -> bool:
 
 
 def _split_sentences(text: str) -> List[str]:
+    """Split text into individual sentences on sentence-ending punctuation.
+
+    Args:
+        text: Raw text to split.
+
+    Returns:
+        List of non-empty sentence strings.
+    """
     parts = re.split(r'(?<=[.!?])\s+', text.strip())
     return [p.strip() for p in parts if p.strip()]
 
 
 def chunk_entry(record: Dict[str, Any]) -> List[Chunk]:
+    """Convert a single Wikipedia page record into a list of Chunks.
+
+    Up to 6 chunks are produced per page in three stages:
+
+    1. **Title chunk** (kind="title") — the bare page title, useful for
+       entity and name queries.
+    2. **Lead chunk** (kind="lead") — the title prepended to the first
+       paragraph, which is usually the most fact-dense part of the page.
+    3. **Body chunks** (kind="chunk") — the remaining content, processed
+       with one of two strategies:
+       - *Section-aware*: when at least two section headers are detected,
+         each section is stored as one chunk (or split into two if it
+         exceeds 200 words).
+       - *Sliding window*: when no clear sections exist, overlapping
+         windows of 5 sentences with a stride of 3 are used (max 4
+         body chunks).
+
+    Args:
+        record: A dict with keys "page_id", "title", and "content".
+
+    Returns:
+        Ordered list of Chunk objects for this page.
+    """
     page_id = int(record["page_id"])
     title   = str(record.get("title", "")).strip()
     content = str(record.get("content", "")).strip()
@@ -111,6 +162,14 @@ def chunk_entry(record: Dict[str, Any]) -> List[Chunk]:
 
 
 def chunk_corpus(records: List[Dict[str, Any]]) -> List[Chunk]:
+    """Chunk every page in the corpus.
+
+    Args:
+        records: List of page dicts (each with "page_id", "title", "content").
+
+    Returns:
+        Flat list of all Chunks across all pages, in corpus order.
+    """
     chunks: List[Chunk] = []
     for record in records:
         chunks.extend(chunk_entry(record))

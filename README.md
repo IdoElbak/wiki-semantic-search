@@ -88,9 +88,9 @@ Each Wikipedia page is split into multiple typed chunks:
 
 1. **Title chunk** (`kind="title"`) — the page title alone; catches entity-name queries.
 2. **Lead chunk** (`kind="lead"`) — `"{title}. {first paragraph}"`. The lead paragraph is the most fact-dense part of any Wikipedia article.
-3. **Body chunks** (`kind="chunk"`) — section-aware if the article has ≥2 detected headers, otherwise a sliding window over sentences (window=7, stride=4). Every body chunk is prefixed with `"{title} - {section}."` so the entity name travels with each passage.
+3. **Body chunks** (`kind="chunk"`) — section-aware if the article has ≥2 detected headers, otherwise a sliding window over sentences (window=5, stride=3). Every body chunk is prefixed with `"{title} - {section}."` so the entity name travels with each passage.
 
-Average ~4–6 chunks per page, capped at 8.
+Average ~4–6 chunks per page, capped at 6.
 
 ### `embed.py` — Embedding
 
@@ -130,11 +130,9 @@ At query time, `run(queries)` in `main.py` delegates to `search_batch()` in `ret
 - Custom TF-IDF with IDF threshold ≥ 1.2, phrase boost × 2.2 for bigrams/trigrams
 - Numbers get a dedicated boost (× 6.0) — important for population, date, and score queries
 - **Decade expansion**: `"1820s"` → tokens `1820 1821 … 1829` for temporal queries
-- **Year signal**: IDF-weighted exact year matches, added as a bonus score
-- **Number signal**: overlap between numeric tokens in the query and the page
 
 **Fusion:**
-- Reciprocal Rank Fusion (RRF) combining dense + lexical + year + number signals
+- Reciprocal Rank Fusion (RRF) combining dense and lexical signals
 - Dynamic per-query weighting: a specificity score (derived from token IDF and coverage) adjusts `wf`/`wb` at query time
 - Returns top-10 `page_id` per query; all query-time computation runs on GPU (≪ 60 s for 50 queries)
 - Best hyperparameters found by grid search: `WF=1.2, WB=1.0, RRF_k=120`
@@ -148,11 +146,11 @@ All scores are mean NDCG@10 on the 29 public queries.
 | Version | `chunk.py` | `index.py` | `retrieve.py` | NDCG@10 |
 |---------|-----------|-----------|--------------|---------|
 | **Baseline** | 1 chunk/page — title + first 200 words only | Basic FAISS flat + single-document BM25 | Simple RRF; no chunk aggregation | 0.320 |
-| **Chunking overhaul** | Section-aware: title chunk + lead chunk + body chunks (sliding window over sentences, window=7, stride=4); title prefix on every chunk; ~4–6 chunks/page | Rebuilt with multi-chunk pages; BM25 now indexes full page vocabulary | Max-pooling to collapse multiple chunks per page to a single page score | 0.408 |
+| **Chunking overhaul** | Section-aware: title chunk + lead chunk + body chunks (sliding window over sentences, window=5, stride=3); title prefix on every chunk; ~4–6 chunks/page | Rebuilt with multi-chunk pages; BM25 now indexes full page vocabulary | Max-pooling to collapse multiple chunks per page to a single page score | 0.408 |
 | **Hyperparameter tuning** | — | — | Grid-searched WF, WB, RRF_k over 80 combinations; best: WF=1.0, WB=0.8, RRF_k=90 | 0.421 |
 | **Candidate pool + temporal expansion** | — | Title text doubled in BM25 for entity-name boost; bigrams/trigrams added | FAISS candidates raised to 2000; decade tokens expanded ("1820s" → 1820–1829); PRF removed (hurt performance) | 0.439 |
-| **Top-5 mean pooling** | — | — | Chunk aggregation changed from top-3 to top-5 mean per page | 0.440 |
-| **Two-stage rescore + signals** | — | — | Exact dot-product re-score of top-350 candidates; year-match and number-overlap bonus signals; dynamic per-query RRF weighting | **0.448** |
+| **Top-5 mean pooling** | — | — | Changed to best performing chunk aggregation, top-3 mean per page | 0.440 |
+| **Two-stage rescore** | — | — | Exact dot-product re-score of top-350 candidates; dynamic per-query RRF weighting | **0.448** |
 
 **Key findings from ablation:**
 - PRF (Pseudo-Relevance Feedback) slightly hurt performance — removed in final version
